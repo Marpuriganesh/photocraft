@@ -3665,32 +3665,29 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             feed_live_stroke(app);
             crate::magnetic_lasso_ui::flush(app);
         }
-        if buttons.stopped {
+        let any_down = ui.input(|i| i.pointer.primary_down() || i.pointer.secondary_down());
+        let release = buttons.stopped
+            || (press_stroke && ui.input(|i| i.pointer.primary_released()))
+            || (app.drag.is_some() && !any_down);
+        if release {
             // The live painting press already created the stroke and this release commits it.
             // egui may also report clicked on the same release; replaying that click paints a
             // second full-pressure dab over the real (possibly light-pressure) pen dab.
-            if press_stroke {
+            if press_stroke || buttons.stopped {
                 buttons.clicked = false;
             }
-            let p = response.interact_pointer_pos().map(|p| xf.to_doc(p)).or_else(|| app.drag.as_ref().and_then(|d| d.points.last().map(|q| [q[0], q[1]])));
+            let p = response
+                .interact_pointer_pos()
+                .map(|p| xf.to_doc(p))
+                .or_else(|| app.drag.as_ref().and_then(|d| d.points.last().map(|q| [q[0], q[1]])));
             if let Some(d) = p {
                 tap_at_peak_pressure(app);
                 tool_event(app, ToolEvent::Up { x: d[0], y: d[1] }, mods);
+            } else if let Some(d) = app.drag.take() {
+                finish_gesture(app, d);
             }
-        }
-        // A stroke started on the press ends with the release, whether egui saw a drag, a click,
-        // or neither (a long press that never moved).
-        if press_stroke && !buttons.stopped && ui.input(|i| i.pointer.primary_released()) {
-            buttons.clicked = false;
-            let p = response.interact_pointer_pos().map(|p| xf.to_doc(p)).or_else(|| app.drag.as_ref().and_then(|d| d.points.last().map(|q| [q[0], q[1]])));
-            if let Some(d) = p
-                && app.drag.is_some()
-            {
-                tap_at_peak_pressure(app);
-                tool_event(app, ToolEvent::Up { x: d[0], y: d[1] }, mods);
-            }
-        }
-        if press_stroke && (app.drag.is_none() || !ui.input(|i| i.pointer.primary_down())) {
+            app.press_stroke = false;
+        } else if !any_down {
             app.press_stroke = false;
         }
         if buttons.clicked

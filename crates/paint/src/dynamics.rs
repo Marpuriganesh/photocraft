@@ -777,6 +777,7 @@ pub struct DabGenerator {
     builder: DabBuilder,
     dual: Option<DualBuilder>,
     scratch: Vec<StrokePoint>,
+    smooth_scratch: Vec<StrokePoint>,
 }
 
 impl DabGenerator {
@@ -808,6 +809,7 @@ impl DabGenerator {
             builder: DabBuilder::new(&brush),
             dual: dual_on.then(|| DualBuilder::new(&brush)),
             scratch: Vec::new(),
+            smooth_scratch: Vec::new(),
         }
     }
     /// Fit a midpoint Bézier curve through the input points (live pointer input). Off keeps the
@@ -848,22 +850,26 @@ impl DabGenerator {
                 None => curve.push(*p),
             }
         }
-        let mut sm = Vec::new();
+        let mut sm = std::mem::take(&mut self.smooth_scratch);
+        sm.clear();
         for p in &curve {
             self.smoother.push(*p, &mut sm);
         }
         self.walk(&sm, dabs, dual);
         self.scratch = curve;
+        self.smooth_scratch = sm;
     }
 
     /// End of stroke.
     pub fn finish(&mut self, dabs: &mut Vec<Dab>, dual: &mut Vec<Dab>) {
-        let mut curve = Vec::new();
+        let mut curve = std::mem::take(&mut self.scratch);
+        curve.clear();
         if let Some(s) = self.spline.as_mut() {
             s.finish(&mut curve);
         }
 
-        let mut sm = Vec::new();
+        let mut sm = std::mem::take(&mut self.smooth_scratch);
+        sm.clear();
         for p in &curve {
             self.smoother.push(*p, &mut sm);
         }
@@ -882,6 +888,8 @@ impl DabGenerator {
                 db.build(s, dual);
             }
         }
+        self.scratch = curve;
+        self.smooth_scratch = sm;
     }
 }
 

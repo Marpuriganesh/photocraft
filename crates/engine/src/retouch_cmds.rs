@@ -1122,13 +1122,6 @@ impl LiveDab {
         self.render_new_dabs()
     }
 
-    /// End of stroke: renders what the generator held back (the spline's last piece and the
-    /// smoothing catch-up). Returns the rectangle that changed.
-    pub fn finish(&mut self) -> Result<Rect> {
-        self.renderer.finish();
-        self.render_new_dabs()
-    }
-
     /// Runs the tool's effect for every dab recorded since the last call.
     fn render_new_dabs(&mut self) -> Result<Rect> {
         let ctx = self.renderer.ctx.clone();
