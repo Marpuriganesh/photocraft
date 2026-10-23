@@ -1,6 +1,6 @@
 //! Font database: bundled fonts (always available, also on the web), the optional craft-fonts
-//! Japanese fonts ([`crate::craft_fonts`], when built with `CRAFT_FONTS_DIR`), optional system
-//! fonts found by scanning platform directories (plus Fontconfig's file list on Linux),
+//! fonts of every script ([`crate::craft_fonts`], when built with `CRAFT_FONTS_DIR`), optional
+//! system fonts found by scanning platform directories (plus Fontconfig's file list on Linux),
 //! user-registered font data, and PostScript-name lookup for PSD import.
 
 use std::collections::HashMap;
@@ -225,12 +225,20 @@ impl FontDb {
             db.register_static_font(bytes.as_slice());
         }
         // The optional craft-fonts (empty unless built with CRAFT_FONTS_DIR; always empty on
-        // wasm32), before any system font.
-        for f in crate::craft_fonts::CRAFT_FONTS.iter().filter(|f| f.is_japanese()) {
-            db.register_static_font(f.bytes);
-        }
+        // wasm32), every script, before any system font.
+        db.register_craft_fonts(crate::craft_fonts::CRAFT_FONTS);
         db.refresh_generics();
         db
+    }
+
+    /// Registers craft-fonts manifest entries of every script. A single-face file registers under
+    /// its manifest family, whatever family its `name` table gives. Each face of a collection
+    /// (TTC/OTC) keeps the family its `name` table gives.
+    fn register_craft_fonts(&mut self, fonts: &[crate::CraftFont]) {
+        for f in fonts {
+            let family = (face_count(f.bytes) == 1).then_some(f.family);
+            self.register_blob(Blob::new(Arc::new(f.bytes)), family);
+        }
     }
 
     /// Bundled fonts plus the fonts installed on this machine (no-op on the web).
@@ -279,16 +287,21 @@ impl FontDb {
 
     /// Registers font data (TTF/OTF, or every face of a TTC/OTC). Returns the family names added.
     pub fn register_font_data(&mut self, bytes: Vec<u8>) -> Vec<String> {
-        self.register_blob(Blob::new(Arc::new(bytes)))
+        self.register_blob(Blob::new(Arc::new(bytes)), None)
     }
 
     /// Registers embedded font data without copying it.
     fn register_static_font(&mut self, bytes: &'static [u8]) -> Vec<String> {
-        self.register_blob(Blob::new(Arc::new(bytes)))
+        self.register_blob(Blob::new(Arc::new(bytes)), None)
     }
 
-    fn register_blob(&mut self, blob: Blob<u8>) -> Vec<String> {
-        let added = self.fcx.collection.register_fonts(blob, None);
+    /// Registers every face in `blob`, under `family` when given, else under the family each
+    /// face's `name` table gives.
+    fn register_blob(&mut self, blob: Blob<u8>, family: Option<&str>) -> Vec<String> {
+        let Some(blob) = sanitize_font_blob(blob) else {
+            return Vec::new();
+        };
+        let added = self.fcx.collection.register_fonts(blob, family.map(|f| FontInfoOverride { family_name: Some(f), ..Default::default() }));
         let mut names = Vec::new();
         for (id, _) in added {
             if let Some(n) = self.fcx.collection.family_name(id)
@@ -538,6 +551,65 @@ impl FontDb {
             }
         }
         None
+    }
+}
+
+/// Maximum faces and cumulative variation axes admitted from a single font blob.
+const MAX_COLLECTION_FACES: usize = 256;
+const MAX_COLLECTION_AXES: usize = 4096;
+
+/// Validates `blob` before handing it to `fontique`, deduplicating repeated TTC table-directory
+/// offsets and rejecting collections with excessive faces or variation axes.
+fn sanitize_font_blob(blob: Blob<u8>) -> Option<Blob<u8>> {
+    let data = blob.as_ref();
+    if data.len() > 256 * 1024 * 1024 {
+        return None;
+    }
+    match FileRef::new(data).ok()? {
+        FileRef::Font(font) => {
+            if font.axes().len() > MAX_COLLECTION_AXES {
+                return None;
+            }
+            Some(blob)
+        }
+        FileRef::Collection(collection) => {
+            let n = usize::try_from(collection.len()).ok()?;
+            if n == 0 || n > MAX_COLLECTION_FACES {
+                return None;
+            }
+            let dir_end = 12usize.checked_add(n.checked_mul(4)?)?;
+            let offsets_raw = data.get(12..dir_end)?;
+            let mut unique_offsets: Vec<u32> = Vec::with_capacity(n);
+            let mut total_axes = 0usize;
+            for (i, chunk) in offsets_raw.as_chunks::<4>().0.iter().enumerate() {
+                let off = u32::from_be_bytes(*chunk);
+                if unique_offsets.contains(&off) {
+                    continue;
+                }
+                let idx = u32::try_from(i).ok()?;
+                let Ok(font) = collection.get(idx) else {
+                    continue;
+                };
+                total_axes = total_axes.checked_add(font.axes().len())?;
+                if total_axes > MAX_COLLECTION_AXES {
+                    return None;
+                }
+                unique_offsets.push(off);
+            }
+            if unique_offsets.is_empty() {
+                return None;
+            }
+            if unique_offsets.len() == n {
+                return Some(blob);
+            }
+            let mut bytes = data.to_vec();
+            bytes.get_mut(8..12)?.copy_from_slice(&(unique_offsets.len() as u32).to_be_bytes());
+            for (slot, off) in unique_offsets.iter().enumerate() {
+                let pos = 12 + slot * 4;
+                bytes.get_mut(pos..pos + 4)?.copy_from_slice(&off.to_be_bytes());
+            }
+            Some(Blob::new(Arc::new(bytes)))
+        }
     }
 }
 
