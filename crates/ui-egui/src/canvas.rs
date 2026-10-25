@@ -687,8 +687,8 @@ fn live_stroke(app: &PhotocraftApp, idx: usize) -> Option<&LiveStroke> {
 fn stroke_params(app: &PhotocraftApp, d: &Drag, points: &[Vec<f64>]) -> serde_json::Value {
     let tool = d.tool;
     let mut p = json!({ "points": points, "erase": d.erase, "zoom": app.point_zoom(), "target": paint_target(app) });
-    // Round fast curves for the Brush and Eraser; the Pencil follows its points exactly.
-    if tool != Tool::Pencil && !crate::eraser_ui::pencil_mode(app, tool) && !crate::eraser_ui::block_mode(app, tool) {
+    // Round fast curves for the Brush and Eraser only; nothing else.
+    if matches!(tool, Tool::Brush | Tool::Eraser) && !crate::eraser_ui::pencil_mode(app, tool) && !crate::eraser_ui::block_mode(app, tool) {
         p["fitCurve"] = json!(true);
     }
     if d.clear {

@@ -487,6 +487,8 @@ fn rapid_strokes_release_cleanly_and_allow_further_strokes() {
     // Ensure journal has recorded all 3 strokes.
     let count = h.state().session.journal.iter().filter(|(id, _)| id == "paint.stroke").count();
     assert_eq!(count, 3, "all 3 rapid strokes were committed");
+}
+
 /// A Blur, Smudge or Dodge stroke through the canvas: releasing it commits the pixels its live
 /// stroke drew (`Session::offer_live_dab`), which are what replaying the journaled command paints.
 #[test]

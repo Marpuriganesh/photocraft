@@ -1380,15 +1380,6 @@ impl LiveDab {
         self.bounds
     }
 
-    /// Render more points; returns the rectangle that changed.
-    /// Invalid coordinates reject the whole batch without changing the preview.
-    pub fn push(&mut self, pts: &[StrokePoint]) -> Result<Rect> {
-        crate::brush_cmds::check_coords(pts, &self.cmd)?;
-        self.renderer.push(pts);
-        self.run_new_dabs()
-    }
-
-   
     /// Run the dabs the renderer has generated since the last call on the working copy; returns
     /// the rectangle they changed.
     fn run_new_dabs(&mut self) -> Rect {
